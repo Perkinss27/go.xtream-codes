@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 )
 
 var defaultUserAgent = "go.xstream-codes (Go-http-client/1.1)"
@@ -30,6 +31,9 @@ type XtreamClient struct {
 
 	// We store an internal map of Streams for use with GetStreamURL
 	streams map[int]Stream
+
+	//FORK-ADDED : We add a mutex to mitigate concurrency writes errors to the streams map.
+	mu sync.Mutex
 }
 
 // NewClient returns an initialized XtreamClient with the given values.
@@ -194,9 +198,14 @@ func (c *XtreamClient) GetStreams(streamAction, categoryID string) ([]Stream, er
 		return nil, jsonErr
 	}
 
+	//FORK-ADDED : Locking access to streams map while new values are insterted .
+	//It is now secure to use multiple goroutines to fetch streams.
+	c.mu.Lock()
 	for _, stream := range streams {
 		c.streams[int(stream.ID)] = stream
 	}
+	c.mu.Unlock()
+	//Unlocking access to streams map.
 
 	return streams, nil
 }
