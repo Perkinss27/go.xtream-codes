@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"sync"
 )
 
 var defaultUserAgent = "go.xstream-codes (Go-http-client/1.1)"
@@ -29,11 +28,7 @@ type XtreamClient struct {
 	HTTP    *http.Client
 	Context context.Context
 
-	// We store an internal map of Streams for use with GetStreamURL
-	streams map[int]Stream
-
-	//FORK-ADDED : We add a mutex to mitigate concurrency writes errors to the streams map.
-	mu sync.Mutex
+	//FORK : we delete streams map.
 }
 
 // NewClient returns an initialized XtreamClient with the given values.
@@ -53,7 +48,7 @@ func NewClient(username, password, baseURL string) (*XtreamClient, error) {
 		HTTP:    http.DefaultClient,
 		Context: context.Background(),
 
-		streams: make(map[int]Stream),
+		//FORK no need to initialize streams map
 	}
 
 	authData, authErr := client.sendRequest("", nil)
@@ -97,15 +92,8 @@ func NewClientWithUserAgent(ctx context.Context, username, password, baseURL, us
 }
 
 // GetStreamURL will return a stream URL string for the given streamID and wantedFormat.
-func (c *XtreamClient) GetStreamURL(streamID int, wantedFormat string) (string, error) {
-
-	// For Live Streams the main format is
-	// http(s)://domain:port/live/username/password/streamID.ext ( In allowed_output_formats element you have the available ext )
-	// For VOD Streams the format is:
-	// http(s)://domain:port/movie/username/password/streamID.ext ( In target_container element you have the available ext )
-	// For Series Streams the format is
-	// http(s)://domain:port/series/username/password/streamID.ext ( In target_container element you have the available ext )
-
+// FORK-ADDED : Now takes a stream elem (either struct Stream or struct SeriesEpisode) as argument.
+func (c *XtreamClient) GetStreamURL(stream_elem interface{}, wantedFormat string) (string, error) {
 	validFormat := false
 
 	for _, allowedFormat := range c.UserInfo.AllowedOutputFormats {
@@ -118,13 +106,21 @@ func (c *XtreamClient) GetStreamURL(streamID int, wantedFormat string) (string, 
 		return "", fmt.Errorf("%s is not an allowed output format", wantedFormat)
 	}
 
-	if _, ok := c.streams[streamID]; !ok {
-		return "", fmt.Errorf("%d is not a valid stream id", streamID)
+	//FORK-ADDED : type assertion of stream_elem to return the correct url.
+	switch stream := stream_elem.(type) {
+	case Stream:
+		if stream.Type == "movie" {
+			return fmt.Sprintf("%s/%s/%s/%s/%d.%s", c.BaseURL, stream.Type, c.Username, c.Password, stream.ID, stream.ContainerExtension), nil
+		} else {
+			return fmt.Sprintf("%s/%s/%s/%s/%d.%s", c.BaseURL, stream.Type, c.Username, c.Password, stream.ID, wantedFormat), nil
+		}
+
+	case SeriesEpisode:
+		return fmt.Sprintf("%s/series/%s/%s/%s.%s", c.BaseURL, c.Username, c.Password, stream.ID, stream.ContainerExtension), nil
 	}
 
-	stream := c.streams[streamID]
+	return "", fmt.Errorf("could not determine stream url")
 
-	return fmt.Sprintf("%s/%s/%s/%s/%d.%s", c.BaseURL, stream.Type, c.Username, c.Password, stream.ID, wantedFormat), nil
 }
 
 // GetLiveCategories will return a slice of categories for live streams.
@@ -198,14 +194,7 @@ func (c *XtreamClient) GetStreams(streamAction, categoryID string) ([]Stream, er
 		return nil, jsonErr
 	}
 
-	//FORK-ADDED : Locking access to streams map while new values are insterted .
-	//It is now secure to use multiple goroutines to fetch streams.
-	c.mu.Lock()
-	for _, stream := range streams {
-		c.streams[int(stream.ID)] = stream
-	}
-	c.mu.Unlock()
-	//Unlocking access to streams map.
+	//FORK : No need to log streams into XtreamClient struct anymore.
 
 	return streams, nil
 }
